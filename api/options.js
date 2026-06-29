@@ -1,4 +1,4 @@
-import { sql, ensureSchema, LOTS } from '../lib/db.js';
+import { sql, ensureSchema, LOTS, STATUSES } from '../lib/db.js';
 
 const KINDS = ['workstream', 'category'];
 
@@ -13,6 +13,7 @@ export default async function handler(req, res) {
         workstreams: rows.filter((r) => r.kind === 'workstream'),
         categories: rows.filter((r) => r.kind === 'category'),
         lots: LOTS,
+        statuses: STATUSES,
       });
     }
 

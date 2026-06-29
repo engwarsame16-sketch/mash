@@ -29,9 +29,11 @@ export default async function handler(req, res) {
           lot           = ${body.lot},
           workstream    = ${body.workstream},
           cost_category = ${body.cost_category},
-          notes         = ${body.notes ? String(body.notes).trim() : null}
+          notes         = ${body.notes ? String(body.notes).trim() : null},
+          status        = ${body.status || 'Paid'},
+          reference     = ${body.reference ? String(body.reference).trim() : null}
         WHERE id = ${id}
-        RETURNING id, description, amount, entry_date, lot, workstream, cost_category, notes, created_at;
+        RETURNING id, description, amount, entry_date, lot, workstream, cost_category, notes, status, reference, created_at;
       `;
       if (!rows.length) return res.status(404).json({ error: 'Entry not found.' });
       return res.status(200).json(rows[0]);

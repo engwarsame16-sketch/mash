@@ -19,7 +19,7 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       const { rows } = await sql`
-        SELECT id, description, amount, entry_date, lot, workstream, cost_category, notes, created_at
+        SELECT id, description, amount, entry_date, lot, workstream, cost_category, notes, status, reference, created_at
         FROM entries
         ORDER BY entry_date DESC, id DESC;
       `;
@@ -32,7 +32,7 @@ export default async function handler(req, res) {
       if (errors.length) return res.status(400).json({ error: errors.join(' ') });
 
       const { rows } = await sql`
-        INSERT INTO entries (description, amount, entry_date, lot, workstream, cost_category, notes)
+        INSERT INTO entries (description, amount, entry_date, lot, workstream, cost_category, notes, status, reference)
         VALUES (
           ${body.description.trim()},
           ${Number(body.amount)},
@@ -40,9 +40,11 @@ export default async function handler(req, res) {
           ${body.lot},
           ${body.workstream},
           ${body.cost_category},
-          ${body.notes ? String(body.notes).trim() : null}
+          ${body.notes ? String(body.notes).trim() : null},
+          ${body.status || 'Paid'},
+          ${body.reference ? String(body.reference).trim() : null}
         )
-        RETURNING id, description, amount, entry_date, lot, workstream, cost_category, notes, created_at;
+        RETURNING id, description, amount, entry_date, lot, workstream, cost_category, notes, status, reference, created_at;
       `;
       return res.status(201).json(rows[0]);
     }
