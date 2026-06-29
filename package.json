@@ -9,7 +9,7 @@
     "setup-db": "node scripts/setup-db.mjs"
   },
   "dependencies": {
-    "@vercel/postgres": "^0.10.0"
+    "@neondatabase/serverless": "^0.10.4"
   },
   "devDependencies": {
     "dotenv": "^16.4.7"
