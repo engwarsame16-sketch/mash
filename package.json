@@ -1,0 +1,17 @@
+{
+  "name": "cost-manager",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Project Cost Manager for the Afgooye–Baraawe Road Corridor Project (static HTML/JS + Vercel serverless functions + Vercel Postgres)",
+  "scripts": {
+    "dev": "vercel dev",
+    "setup-db": "node scripts/setup-db.mjs"
+  },
+  "dependencies": {
+    "@vercel/postgres": "^0.10.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.7"
+  }
+}
