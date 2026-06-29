@@ -747,6 +747,56 @@ function renderCategories(view) {
   });
 }
 
+// Inline "+ New" buttons next to the Workstream / Cost Category dropdowns —
+// lets you create a new option without leaving the entry form.
+function wireAddOptionButtons(form) {
+  form.querySelectorAll('.add-opt-btn').forEach((btn) => {
+    btn.onclick = () => {
+      if (btn.dataset.open) return;
+      btn.dataset.open = '1';
+      const kind = btn.dataset.kind;
+      const select = form.querySelector(`[name="${btn.dataset.target}"]`);
+      const label = btn.closest('label.field');
+      const panel = document.createElement('div');
+      panel.className = 'field full inline-add';
+      panel.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center;background:var(--panel-alt);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <input placeholder="New ${kind === 'workstream' ? 'workstream' : 'cost category'} name" />
+          <button type="button" class="btn primary small" data-add>Add</button>
+          <button type="button" class="btn small" data-cancel>Cancel</button>
+        </div>
+        <div class="inline-err"></div>`;
+      label.insertAdjacentElement('afterend', panel);
+      const input = panel.querySelector('input');
+      input.focus();
+      const cleanup = () => { panel.remove(); delete btn.dataset.open; };
+      panel.querySelector('[data-cancel]').onclick = cleanup;
+      const addBtn = panel.querySelector('[data-add]');
+      const doAdd = async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        addBtn.disabled = true; addBtn.textContent = 'Adding…';
+        try {
+          const created = await api.post('/api/options', { kind, name });
+          const listKey = kind === 'workstream' ? 'workstreams' : 'categories';
+          state.options[listKey].push(created);
+          state.options[listKey].sort((a, b) => a.name.localeCompare(b.name));
+          const opt = document.createElement('option');
+          opt.value = created.name; opt.textContent = created.name;
+          select.appendChild(opt);
+          select.value = created.name;
+          cleanup();
+        } catch (err) {
+          panel.querySelector('.inline-err').innerHTML = errorBanner(err.message);
+          addBtn.disabled = false; addBtn.textContent = 'Add';
+        }
+      };
+      addBtn.onclick = doAdd;
+      input.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); doAdd(); } if (ev.key === 'Escape') cleanup(); };
+    };
+  });
+}
+
 // ===================================================================
 // Add / Edit entry modal
 // ===================================================================
@@ -770,8 +820,8 @@ function openEntryModal(entry) {
           <label class="field">Date<input name="entry_date" type="date" value="${esc(cur.entry_date)}" required /></label>
           <label class="field">Lot<select name="lot">${o.lots.map((l) => optTag(l, cur.lot)).join('')}</select></label>
           <label class="field">Status<select name="status">${o.statuses.map((s) => optTag(s, cur.status)).join('')}</select></label>
-          <label class="field">Workstream<select name="workstream" required>${o.workstreams.map((w) => optTag(w.name, cur.workstream)).join('')}</select></label>
-          <label class="field">Cost Category<select name="cost_category" required>${o.categories.map((c) => optTag(c.name, cur.cost_category)).join('')}</select></label>
+          <label class="field">Workstream<div class="select-add"><select name="workstream" required>${o.workstreams.map((w) => optTag(w.name, cur.workstream)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="workstream" data-target="workstream" title="Add a new workstream">+ New</button></div></label>
+          <label class="field">Cost Category<div class="select-add"><select name="cost_category" required>${o.categories.map((c) => optTag(c.name, cur.cost_category)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="category" data-target="cost_category" title="Add a new cost category">+ New</button></div></label>
           <label class="field full">Reference / Invoice no. (optional)<input name="reference" value="${esc(cur.reference)}" placeholder="e.g. INV-2026-014" /></label>
           <label class="field full">Notes / remarks (optional)<textarea name="notes" rows="2" placeholder="Optional remarks…">${esc(cur.notes)}</textarea></label>
         </div>
@@ -785,6 +835,7 @@ function openEntryModal(entry) {
   const close = () => { root.innerHTML = ''; };
   document.getElementById('cancelBtn').onclick = close;
   document.getElementById('overlay').onmousedown = (ev) => { if (ev.target.id === 'overlay') close(); };
+  wireAddOptionButtons(document.getElementById('entryForm'));
   document.getElementById('entryForm').onsubmit = async (ev) => {
     ev.preventDefault();
     const f = ev.target;
