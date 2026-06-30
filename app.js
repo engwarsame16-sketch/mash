@@ -127,8 +127,8 @@ const state = {
 const ROUTES = [
   { hash: '#/', label: 'Dashboard', icon: '▣', render: renderDashboard },
   { hash: '#/transactions', label: 'Transactions', icon: '☰', render: renderTransactions },
-  { hash: '#/staff', label: 'Staff', icon: '👥', render: renderStaff },
-  { hash: '#/budgets', label: 'Budgets', icon: '◎', render: renderBudgets },
+  { hash: '#/managers', label: 'Managers', icon: '👥', render: renderStaff },
+  { hash: '#/budgets', label: 'Budget', icon: '◎', render: renderBudgets },
   { hash: '#/reports', label: 'Reports', icon: '◔', render: renderReports },
   { hash: '#/categories', label: 'Categories', icon: '⚙', render: renderCategories },
   { hash: '#/trash', label: 'Trash', icon: '🗑', render: renderTrash },
@@ -392,7 +392,7 @@ function renderDashboard(view) {
     `<div class="cards">
       <div class="card"><div class="label">Total Spent</div><div class="value green">${money(totalAll)}</div><div class="hint">${all.length} entries · all time</div></div>
       <div class="card"><div class="label">Spent This Month</div><div class="value red">${money(thisMonth)}</div><div class="hint">${monthLabel(thisKey)}</div></div>
-      <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overallBudget > 0 ? money(overallBudget - totalAll) : '—'}</div><div class="hint">${overallBudget > 0 ? `${budgetPct.toFixed(0)}% used · ${money(totalAll)} of ${money(overallBudget)}` : 'Set a budget on the Budgets page'}</div></div>
+      <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overallBudget > 0 ? money(overallBudget - totalAll) : '—'}</div><div class="hint">${overallBudget > 0 ? `${budgetPct.toFixed(0)}% used · ${money(totalAll)} of ${money(overallBudget)}` : 'Set a budget on the Budget page'}</div></div>
       <div class="card"><div class="label">Pending + Committed</div><div class="value amber">${money(notPaid)}</div><div class="hint">Not yet paid</div></div>
     </div>
 
@@ -456,7 +456,7 @@ function renderTransactions(view) {
       <input class="search" id="q" placeholder="Search description, notes, ref…" value="${esc(state.q)}" />
       <select id="fWs"><option value="">All Workstreams</option>${o.workstreams.map((w) => opt(state.filterWorkstream, w.name, w.name)).join('')}</select>
       <select id="fCat"><option value="">All Categories</option>${o.categories.map((c) => opt(state.filterCategory, c.name, c.name)).join('')}</select>
-      <select id="fStaff"><option value="">All Staff</option>${o.staff.map((s) => opt(state.filterStaff, s.name, s.name)).join('')}</select>
+      <select id="fStaff"><option value="">All Managers</option>${o.staff.map((s) => opt(state.filterStaff, s.name, s.name)).join('')}</select>
       <select id="fStatus"><option value="">Any Status</option>${o.statuses.map((s) => opt(state.filterStatus, s, s)).join('')}</select>
     </div>
     <div class="toolbar">
@@ -470,7 +470,7 @@ function renderTransactions(view) {
       <thead><tr>
         <th class="sortable" data-sort="date">Date${arrow('date')}</th>
         <th class="sortable" data-sort="desc">Description${arrow('desc')}</th>
-        <th>Workstream</th><th>Category</th><th>Paid to</th><th>Status</th>
+        <th>Workstream</th><th>Category</th><th>Manager</th><th>Status</th>
         <th class="num sortable" data-sort="amount">Amount${arrow('amount')}</th><th></th>
       </tr></thead>
       <tbody>${rows.length === 0
@@ -490,7 +490,7 @@ function renderTransactions(view) {
   const reRender = () => renderRoute();
   view.querySelector('#addBtn').onclick = () => openEntryModal(null);
   view.querySelector('#exportBtn').onclick = () => {
-    const header = ['Date', 'Description', 'Amount (USD)', 'Workstream', 'Cost Category', 'Paid to', 'Status', 'Reference', 'Notes'];
+    const header = ['Date', 'Description', 'Amount (USD)', 'Workstream', 'Cost Category', 'Manager', 'Status', 'Reference', 'Notes'];
     const data = rows.map((e) => [toDateInput(e.entry_date), e.description, Number(e.amount).toFixed(2), e.workstream, e.cost_category, e.staff || '', e.status || 'Paid', e.reference || '', e.notes || '']);
     downloadCSV('cost-entries.csv', [header, ...data]);
   };
@@ -523,90 +523,50 @@ async function deleteEntry(entry) {
 // Budgets
 // ===================================================================
 function renderBudgets(view) {
-  const o = state.options;
   const all = state.entries;
   const bm = budgetMap();
   const totalAll = total(all);
   const overall = bm['overall:ALL'] || 0;
-
-  const byWs = sumBy(all, 'workstream');
-  const byCat = sumBy(all, 'cost_category');
-
-  const sumBudgets = (scope, names) => names.reduce((s, n) => s + (bm[`${scope}:${n}`] || 0), 0);
-  const wsBudgetTotal = sumBudgets('workstream', o.workstreams.map((w) => w.name));
-  const catBudgetTotal = sumBudgets('category', o.categories.map((c) => c.name));
-
-  const editorRow = (scope, name, actual) => {
-    const b = bm[`${scope}:${name}`] || 0;
-    const pct = b > 0 ? (actual / b) * 100 : (actual > 0 ? 100 : 0);
-    const cls = b === 0 ? '' : pct > 100 ? 'over' : pct >= 85 ? 'warn' : 'ok';
-    const remaining = b - actual;
-    return `<div class="prog-row" data-scope="${scope}" data-name="${esc(name)}">
-      <div class="prog-top">
-        <span class="prog-name">${esc(name)}</span>
-        <span class="prog-vals"><b>${money(actual)}</b>${b > 0 ? ` / ${money(b)} · <span class="${remaining < 0 ? 'prog-pct over' : ''}">${remaining < 0 ? 'over ' + money(-remaining) : money(remaining) + ' left'}</span>` : ' spent'}</span>
-      </div>
-      <div class="prog-track"><div class="prog-fill ${cls}" style="width:${Math.min(pct, 100)}%"></div></div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-        <span class="muted" style="font-size:12px">Budget $</span>
-        <input type="number" min="0" step="0.01" value="${b || ''}" placeholder="0.00" data-budget-input style="width:140px" />
-        <button class="btn small" data-budget-save>Save</button>
-        ${b > 0 ? `<button class="link-btn danger" data-budget-clear>Clear</button>` : ''}
-        <span class="spacer" style="flex:1"></span>
-        ${b > 0 ? `<span class="prog-pct ${pct > 100 ? 'over' : 'muted'}">${pct.toFixed(0)}% used</span>` : ''}
-      </div>
-    </div>`;
-  };
+  const remaining = overall - totalAll;
+  const pct = overall > 0 ? (totalAll / overall) * 100 : 0;
 
   view.innerHTML =
-    pageHead('Budgets', 'Set budget targets and track spend against them', `<button class="btn no-print" onclick="window.print()">🖨 Print</button>`) +
-    `<div class="cards">
-      <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overall ? money(overall) : '—'}</div><div class="hint">${overall ? money(overall - totalAll) + ' remaining' : 'Not set'}</div></div>
-      <div class="card"><div class="label">Total Spent</div><div class="value red">${money(totalAll)}</div><div class="hint">${overall ? ((totalAll / overall) * 100).toFixed(0) + '% of overall budget' : 'all time'}</div></div>
-      <div class="card"><div class="label">Workstream Budgets</div><div class="value">${money(wsBudgetTotal)}</div><div class="hint">across all workstreams</div></div>
-      <div class="card"><div class="label">Category Budgets</div><div class="value">${money(catBudgetTotal)}</div><div class="hint">across all categories</div></div>
-    </div>
-
-    <div class="panel"><h3>Overall project budget</h3><p class="sub">The total approved budget for the whole project.</p>
-      <div style="display:flex;gap:10px;align-items:center">
-        <span class="muted">Budget $</span>
-        <input type="number" min="0" step="0.01" id="overallInput" value="${overall || ''}" placeholder="0.00" style="width:200px" />
-        <button class="btn primary" id="overallSave">Save</button>
+    pageHead('Budget', 'Set your total project budget and track spending against it', `<button class="btn no-print" onclick="window.print()">🖨 Print</button>`) +
+    `<div class="panel"><h3>Total project budget</h3>
+      <p class="sub">Enter the total approved budget for the project. All your spending is tracked against this one number.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span class="muted">Budget&nbsp;$</span>
+        <input type="number" min="0" step="0.01" id="overallInput" value="${overall || ''}" placeholder="0.00" style="width:220px;font-size:16px" />
+        <button class="btn primary" id="overallSave">Save budget</button>
         ${overall ? '<button class="link-btn danger" id="overallClear">Clear</button>' : ''}
       </div>
-      <div style="margin-top:14px" id="overallProg"></div>
     </div>
 
-    <div class="panel"><h3>Budget by Workstream</h3><div id="wsBudgets"></div></div>
-    <div class="panel"><h3>Budget by Cost Category</h3><div id="catBudgets"></div></div>`;
+    ${overall > 0 ? `
+    <div class="cards">
+      <div class="card"><div class="label">Budget</div><div class="value brand">${money(overall)}</div></div>
+      <div class="card"><div class="label">Spent</div><div class="value red">${money(totalAll)}</div><div class="hint">${pct.toFixed(0)}% of budget used</div></div>
+      <div class="card"><div class="label">Remaining</div><div class="value ${remaining < 0 ? 'red' : 'green'}">${money(remaining)}</div><div class="hint">${remaining < 0 ? 'over budget' : 'left to spend'}</div></div>
+    </div>
+    <div class="panel"><h3>Budget usage</h3><div id="overallProg"></div></div>`
+      : '<div class="notice">No budget set yet. Type your total project budget above and click “Save budget” to start tracking.</div>'}`;
 
-  if (overall) view.querySelector('#overallProg').appendChild(progressList([{ name: 'Total project spend', actual: totalAll, budget: overall }]));
-  view.querySelector('#wsBudgets').innerHTML = o.workstreams.map((w) => editorRow('workstream', w.name, byWs[w.name] || 0)).join('');
-  view.querySelector('#catBudgets').innerHTML = o.categories.map((c) => editorRow('category', c.name, byCat[c.name] || 0)).join('');
+  if (overall > 0) view.querySelector('#overallProg').appendChild(progressList([{ name: 'Total project spend', actual: totalAll, budget: overall }]));
 
-  // overall handlers
-  const saveBudget = async (scope, refKey, amount) => {
-    try { await api.post('/api/budgets', { scope, ref_key: refKey, amount }); await loadAll(); renderRoute(); }
+  const saveBudget = async (amount) => {
+    try { await api.post('/api/budgets', { scope: 'overall', ref_key: 'ALL', amount }); await loadAll(); renderRoute(); }
     catch (err) { alert(err.message); }
   };
-  const clearBudget = async (scope, refKey) => {
-    const b = (state.budgets || []).find((x) => x.scope === scope && x.ref_key === refKey);
+  const clearBudget = async () => {
+    const b = (state.budgets || []).find((x) => x.scope === 'overall' && x.ref_key === 'ALL');
     if (!b) return;
     try { await api.del(`/api/budgets/${b.id}`); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
   };
-  view.querySelector('#overallSave').onclick = () => saveBudget('overall', 'ALL', Number(view.querySelector('#overallInput').value) || 0);
+  const input = view.querySelector('#overallInput');
+  view.querySelector('#overallSave').onclick = () => saveBudget(Number(input.value) || 0);
+  input.onkeydown = (ev) => { if (ev.key === 'Enter') saveBudget(Number(input.value) || 0); };
   const ovClear = view.querySelector('#overallClear');
-  if (ovClear) ovClear.onclick = () => clearBudget('overall', 'ALL');
-
-  view.querySelectorAll('.prog-row[data-scope]').forEach((row) => {
-    const scope = row.dataset.scope, name = row.dataset.name;
-    const input = row.querySelector('[data-budget-input]');
-    const saveB = row.querySelector('[data-budget-save]');
-    const clearB = row.querySelector('[data-budget-clear]');
-    if (saveB) saveB.onclick = () => saveBudget(scope, name, Number(input.value) || 0);
-    if (input) input.onkeydown = (ev) => { if (ev.key === 'Enter') saveBudget(scope, name, Number(input.value) || 0); };
-    if (clearB) clearB.onclick = () => clearBudget(scope, name);
-  });
+  if (ovClear) ovClear.onclick = clearBudget;
 }
 
 // ===================================================================
@@ -627,11 +587,11 @@ function renderReports(view) {
   const monthly = months.map((k) => ({ label: monthLabel(k), value: monthMap[k] }));
   let run = 0; const cumulative = months.map((k) => ({ label: monthLabel(k), value: (run += monthMap[k]) }));
 
-  // budget vs actual
-  const byWs = sumBy(scoped, 'workstream'), byCat = sumBy(scoped, 'cost_category');
-  const bvaRows = [];
-  o.workstreams.forEach((w) => bm[`workstream:${w.name}`] && bvaRows.push({ scope: 'Workstream', name: w.name, actual: byWs[w.name] || 0, budget: bm[`workstream:${w.name}`] }));
-  o.categories.forEach((c) => bm[`category:${c.name}`] && bvaRows.push({ scope: 'Category', name: c.name, actual: byCat[c.name] || 0, budget: bm[`category:${c.name}`] }));
+  // overall budget summary (whole project, all-time)
+  const overallBudget = bm['overall:ALL'] || 0;
+  const totalAllTime = total(state.entries);
+  const budgetRemaining = overallBudget - totalAllTime;
+  const budgetUsedPct = overallBudget > 0 ? (totalAllTime / overallBudget) * 100 : 0;
 
   // by status
   const byStatus = sumBy(scoped, 'status');
@@ -658,9 +618,9 @@ function renderReports(view) {
       <div class="panel"><h3>Cumulative Spend</h3><div id="rCum"></div></div>
     </div>
 
-    <div class="panel"><h3>Budget vs Actual</h3><p class="sub">Only scopes with a budget set are shown. Manage budgets on the Budgets page.</p>
-      ${bvaRows.length ? `<table><thead><tr><th>Scope</th><th>Target</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Variance</th><th class="num">Used</th></tr></thead>
-      <tbody>${bvaRows.map((r) => { const v = r.budget - r.actual; const pct = r.budget > 0 ? (r.actual / r.budget) * 100 : 0; return `<tr><td><span class="badge gray">${esc(r.scope)}</span></td><td>${esc(r.name)}</td><td class="num amount">${money(r.budget)}</td><td class="num amount">${money(r.actual)}</td><td class="num amount ${v < 0 ? 'red' : 'green'}">${v < 0 ? '-' : ''}${money(Math.abs(v))}</td><td class="num ${pct > 100 ? '' : 'muted'}" style="${pct > 100 ? 'color:var(--red);font-weight:600' : ''}">${pct.toFixed(0)}%</td></tr>`; }).join('')}</tbody></table>` : '<div class="empty">No budgets set. Go to the Budgets page to add targets.</div>'}
+    <div class="panel"><h3>Budget Summary <span class="muted" style="font-weight:400;font-size:12px">· whole project</span></h3>
+      ${overallBudget > 0 ? `<table><thead><tr><th class="num">Budget</th><th class="num">Spent</th><th class="num">Remaining</th><th class="num">Used</th></tr></thead>
+      <tbody><tr><td class="num amount">${money(overallBudget)}</td><td class="num amount red">${money(totalAllTime)}</td><td class="num amount ${budgetRemaining < 0 ? 'red' : 'green'}">${money(budgetRemaining)}</td><td class="num" style="${budgetUsedPct > 100 ? 'color:var(--red);font-weight:600' : ''}">${budgetUsedPct.toFixed(0)}%</td></tr></tbody></table>` : '<div class="empty">No budget set. Set your total project budget on the Budget page.</div>'}
     </div>
 
     <div class="panel-grid">
@@ -704,9 +664,9 @@ function renderCategories(view) {
     </div>`;
 
   view.innerHTML =
-    pageHead('Categories', 'Manage the workstream, cost category, and staff options') +
-    `<div class="notice">Payment statuses (Paid, Pending, Committed) are fixed. You can freely add, rename, or remove workstreams, cost categories, and staff — renaming updates existing entries, and an option can only be deleted once no entries use it.</div>
-     <div class="panel-grid">${listHtml('Workstreams', 'workstream', o.workstreams)}${listHtml('Cost Categories', 'category', o.categories)}${listHtml('Staff (paid to)', 'staff', o.staff)}</div>`;
+    pageHead('Categories', 'Manage the workstream, cost category, and manager options') +
+    `<div class="notice">Payment statuses (Paid, Pending, Committed) are fixed. You can freely add, rename, or remove workstreams, cost categories, and managers — renaming updates existing entries, and an option can only be deleted once no entries use it.</div>
+     <div class="panel-grid">${listHtml('Workstreams', 'workstream', o.workstreams)}${listHtml('Cost Categories', 'category', o.categories)}${listHtml('Managers', 'staff', o.staff)}</div>`;
 
   view.querySelectorAll('form.add-opt').forEach((form) => {
     form.onsubmit = async (ev) => { ev.preventDefault(); const name = form.name.value.trim(); if (!name) return; try { await api.post('/api/options', { kind: form.dataset.kind, name }); await loadAll(); renderRoute(); } catch (err) { alert(err.message); } };
@@ -740,7 +700,7 @@ function wireAddOptionButtons(form) {
       panel.className = 'field full inline-add';
       panel.innerHTML = `
         <div style="display:flex;gap:8px;align-items:center;background:var(--panel-alt);border:1px solid var(--border);border-radius:8px;padding:8px">
-          <input placeholder="New ${kind === 'workstream' ? 'workstream' : kind === 'category' ? 'cost category' : 'staff member'} name" />
+          <input placeholder="New ${kind === 'workstream' ? 'workstream' : kind === 'category' ? 'cost category' : 'manager'} name" />
           <button type="button" class="btn primary small" data-add>Add</button>
           <button type="button" class="btn small" data-cancel>Cancel</button>
         </div>
@@ -799,7 +759,7 @@ function openEntryModal(entry) {
           <label class="field">Amount (USD)<input name="amount" type="number" step="0.01" min="0" value="${esc(cur.amount)}" placeholder="0.00" required /></label>
           <label class="field">Date<input name="entry_date" type="date" value="${esc(cur.entry_date)}" required /></label>
           <label class="field">Status<select name="status">${o.statuses.map((s) => optTag(s, cur.status)).join('')}</select></label>
-          <label class="field">Paid to (staff)<div class="select-add"><select name="staff">${optBlank(cur.staff)}${o.staff.map((s) => optTag(s.name, cur.staff)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="staff" data-target="staff" title="Add a new staff member">+ New</button></div></label>
+          <label class="field">Manager (spent by)<div class="select-add"><select name="staff">${optBlank(cur.staff)}${o.staff.map((s) => optTag(s.name, cur.staff)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="staff" data-target="staff" title="Add a new manager">+ New</button></div></label>
           <label class="field">Workstream<div class="select-add"><select name="workstream" required>${o.workstreams.map((w) => optTag(w.name, cur.workstream)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="workstream" data-target="workstream" title="Add a new workstream">+ New</button></div></label>
           <label class="field">Cost Category<div class="select-add"><select name="cost_category" required>${o.categories.map((c) => optTag(c.name, cur.cost_category)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="category" data-target="cost_category" title="Add a new cost category">+ New</button></div></label>
           <label class="field full">Reference / Invoice no. (optional)<input name="reference" value="${esc(cur.reference)}" placeholder="e.g. INV-2026-014" /></label>
@@ -852,24 +812,24 @@ function renderStaff(view) {
   const takenTotal = Object.values(byStaff).reduce((s, n) => s + n, 0);
 
   view.innerHTML =
-    pageHead('Staff', 'How much each person has taken from the project budget',
+    pageHead('Money Spent by Managers', 'How much each manager has spent from the project budget',
       `<button class="btn primary" id="addBtn">+ Add Entry</button>`) +
     `<div class="cards">
-      <div class="card"><div class="label">Taken by Staff</div><div class="value red">${money(takenTotal)}</div><div class="hint">${scopedTotal ? ((takenTotal / scopedTotal) * 100).toFixed(0) + '% of period spend' : 'none tagged'} · ${staffRows.length} people</div></div>
-      <div class="card"><div class="label">Untagged Spend</div><div class="value amber">${money(untaggedTotal)}</div><div class="hint">${untagged.length} entries · no staff assigned</div></div>
-      <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overallBudget > 0 ? money(overallBudget - takenTotal) : '—'}</div><div class="hint">${overallBudget > 0 ? money(takenTotal) + ' taken of ' + money(overallBudget) : 'Set a budget on the Budgets page'}</div></div>
+      <div class="card"><div class="label">Spent by Managers</div><div class="value red">${money(takenTotal)}</div><div class="hint">${scopedTotal ? ((takenTotal / scopedTotal) * 100).toFixed(0) + '% of period spend' : 'none tagged'} · ${staffRows.length} managers</div></div>
+      <div class="card"><div class="label">Unassigned Spend</div><div class="value amber">${money(untaggedTotal)}</div><div class="hint">${untagged.length} entries · no manager set</div></div>
+      <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overallBudget > 0 ? money(overallBudget - takenTotal) : '—'}</div><div class="hint">${overallBudget > 0 ? money(takenTotal) + ' spent of ' + money(overallBudget) : 'Set a budget on the Budget page'}</div></div>
     </div>
 
     ${staffRows.length === 0 && o.staff.length === 0
-      ? `<div class="notice">No staff members yet. Add people (yourself and anyone else) on the <a href="#/categories" class="link-btn">Categories page</a>, or use “+ New” in the entry form’s “Paid to” field.</div>`
+      ? `<div class="notice">No managers yet. Add managers (yourself and anyone who spends from the budget) on the <a href="#/categories" class="link-btn">Categories page</a>, or use “+ New” in the entry form’s “Manager” field.</div>`
       : `<div class="toolbar"><span class="muted" style="font-weight:600">Period:</span>${periodControl()}<div class="spacer"></div><span class="muted">${scoped.length} entries · ${money(scopedTotal)}</span></div>
 
     <div class="panel-grid">
-      <div class="panel"><h3>Spend by Staff</h3><div id="staffChart"></div></div>
-      <div class="panel"><h3>Per-person totals</h3>
-        ${staffRows.length ? `<table><thead><tr><th>Staff member</th><th class="num">Entries</th><th class="num">Total taken</th>${overallBudget > 0 ? '<th class="num">% of budget</th>' : ''}</tr></thead>
+      <div class="panel"><h3>Spend by Manager</h3><div id="staffChart"></div></div>
+      <div class="panel"><h3>Per-manager totals</h3>
+        ${staffRows.length ? `<table><thead><tr><th>Manager</th><th class="num">Entries</th><th class="num">Total spent</th>${overallBudget > 0 ? '<th class="num">% of budget</th>' : ''}</tr></thead>
         <tbody>${staffRows.map((r) => `<tr><td><span class="badge gray">${esc(r.name)}</span></td><td class="num">${r.count}</td><td class="num amount red">${money(r.total)}</td>${overallBudget > 0 ? `<td class="num muted">${((r.total / overallBudget) * 100).toFixed(1)}%</td>` : ''}</tr>`).join('')}
-        ${untaggedTotal > 0 ? `<tr><td><span class="muted">No staff</span></td><td class="num">${untagged.length}</td><td class="num amount muted">${money(untaggedTotal)}</td>${overallBudget > 0 ? `<td class="num muted">${((untaggedTotal / overallBudget) * 100).toFixed(1)}%</td>` : ''}</tr>` : ''}
+        ${untaggedTotal > 0 ? `<tr><td><span class="muted">No manager</span></td><td class="num">${untagged.length}</td><td class="num amount muted">${money(untaggedTotal)}</td>${overallBudget > 0 ? `<td class="num muted">${((untaggedTotal / overallBudget) * 100).toFixed(1)}%</td>` : ''}</tr>` : ''}
         <tr style="border-top:2px solid var(--border)"><td><strong>Total</strong></td><td class="num"><strong>${scoped.length}</strong></td><td class="num amount"><strong>${money(scopedTotal)}</strong></td>${overallBudget > 0 ? `<td class="num"><strong>${scopedTotal ? ((scopedTotal / overallBudget) * 100).toFixed(1) : '0.0'}%</strong></td>` : ''}</tr></tbody></table>` : '<div class="empty">No tagged spend in this period.</div>'}
       </div>
     </div>`}`;
