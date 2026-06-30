@@ -1,4 +1,5 @@
 import { sql, ensureSchema, STATUSES } from '../lib/db.js';
+import { requireAuth } from '../lib/auth.js';
 
 const KINDS = ['workstream', 'category', 'staff'];
 
@@ -6,6 +7,7 @@ const KINDS = ['workstream', 'category', 'staff'];
 export default async function handler(req, res) {
   try {
     await ensureSchema();
+    if (!(await requireAuth(req, res))) return;
 
     if (req.method === 'GET') {
       const { rows } = await sql`SELECT id, kind, name FROM options ORDER BY kind, name;`;

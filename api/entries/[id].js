@@ -1,4 +1,5 @@
 import { sql, ensureSchema } from '../../lib/db.js';
+import { requireAuth } from '../../lib/auth.js';
 
 function validate(body) {
   const errors = [];
@@ -18,6 +19,7 @@ export default async function handler(req, res) {
   const { id } = req.query;
   try {
     await ensureSchema();
+    if (!(await requireAuth(req, res))) return;
 
     if (req.method === 'PUT') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};

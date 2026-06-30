@@ -1,9 +1,13 @@
-import { sql } from '../../lib/db.js';
+import { sql, ensureSchema } from '../../lib/db.js';
+import { requireAuth } from '../../lib/auth.js';
 
 // /api/options/:id — PUT (rename, propagates to entries) / DELETE (blocked if in use)
 export default async function handler(req, res) {
   const { id } = req.query;
   try {
+    await ensureSchema();
+    if (!(await requireAuth(req, res))) return;
+
     if (req.method === 'PUT') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
       const name = body.name ? String(body.name).trim() : '';

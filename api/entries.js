@@ -1,4 +1,5 @@
 import { sql, ensureSchema } from '../lib/db.js';
+import { requireAuth } from '../lib/auth.js';
 
 function validate(body) {
   const errors = [];
@@ -15,6 +16,7 @@ function validate(body) {
 export default async function handler(req, res) {
   try {
     await ensureSchema();
+    if (!(await requireAuth(req, res))) return;
 
     if (req.method === 'GET') {
       // ?trash=1 returns only soft-deleted entries; default returns active ones.

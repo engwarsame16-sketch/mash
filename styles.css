@@ -254,6 +254,15 @@ label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; 
 .axis-line { stroke: var(--grid); }
 .axis-text { font-size: 10px; fill: var(--muted); }
 
+/* ---------- Auth gate ---------- */
+body.locked .sidebar { display: none; }
+.auth-wrap { min-height: 78vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.auth-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 30px 28px; width: 100%; max-width: 380px; }
+.auth-brand { font-weight: 700; color: var(--brand); margin-bottom: 16px; font-size: 15px; }
+.auth-card h2 { margin: 0 0 6px; font-size: 20px; }
+.auth-card form { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+.auth-card .field input { width: 100%; }
+
 /* ---------- Print ---------- */
 @media print {
   .sidebar, .head-actions, .toolbar, .no-print { display: none !important; }

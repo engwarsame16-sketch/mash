@@ -1,9 +1,11 @@
 import { sql, ensureSchema, BUDGET_SCOPES } from '../lib/db.js';
+import { requireAuth } from '../lib/auth.js';
 
 // /api/budgets — GET (list) / POST (create or update a budget target)
 export default async function handler(req, res) {
   try {
     await ensureSchema();
+    if (!(await requireAuth(req, res))) return;
 
     if (req.method === 'GET') {
       const { rows } = await sql`SELECT id, scope, ref_key, amount FROM budgets ORDER BY scope, ref_key;`;

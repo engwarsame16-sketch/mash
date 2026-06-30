@@ -13,7 +13,11 @@ async function http(method, url, body) {
   const res = await fetch(url, opts);
   let data = null;
   try { data = await res.json(); } catch { /* no body */ }
-  if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+  if (!res.ok) {
+    // A 401 from a data endpoint means the session is gone — show the login gate.
+    if (res.status === 401 && !url.startsWith('/api/auth')) on401();
+    throw new Error((data && data.error) || `Request failed (${res.status})`);
+  }
   return data;
 }
 const api = {
@@ -834,6 +838,40 @@ function renderStaff(view) {
       </div>
     </div>`}`;
 
+  // Manage-managers panel — always shown, so people can be added/removed here.
+  const managePanel = document.createElement('div');
+  managePanel.className = 'panel';
+  managePanel.innerHTML = `<h3>Manage managers</h3>
+    <p class="sub">Add the people who spend from the budget. A manager can only be deleted once no entries are assigned to them.</p>
+    <table><tbody>${o.staff.length
+      ? o.staff.map((s) => `<tr><td>${esc(s.name)}</td><td class="num" style="white-space:nowrap;width:1px"><button class="link-btn" data-renmgr="${s.id}">Rename</button>&nbsp;&nbsp;<button class="link-btn danger" data-delmgr="${s.id}">Delete</button></td></tr>`).join('')
+      : '<tr><td class="empty">No managers yet</td></tr>'}</tbody></table>
+    <form id="addMgrForm" style="display:flex;gap:8px;margin-top:14px"><input name="name" placeholder="Add manager name…" style="flex:1" /><button class="btn primary" type="submit">Add manager</button></form>`;
+  view.appendChild(managePanel);
+
+  managePanel.querySelector('#addMgrForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const name = ev.target.name.value.trim();
+    if (!name) return;
+    try { await api.post('/api/options', { kind: 'staff', name }); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
+  };
+  managePanel.querySelectorAll('[data-delmgr]').forEach((b) => {
+    b.onclick = async () => {
+      const name = b.closest('tr').querySelector('td').textContent;
+      if (!confirm(`Delete manager "${name}"?`)) return;
+      try { await api.del(`/api/options/${b.dataset.delmgr}`); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
+    };
+  });
+  managePanel.querySelectorAll('[data-renmgr]').forEach((b) => {
+    b.onclick = async () => {
+      const cell = b.closest('tr').querySelector('td');
+      const current = cell.textContent;
+      const name = prompt('Rename manager:', current);
+      if (name === null || !name.trim() || name.trim() === current) return;
+      try { await api.put(`/api/options/${b.dataset.renmgr}`, { name: name.trim() }); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
+    };
+  });
+
   if (staffRows.length) view.querySelector('#staffChart').appendChild(donutChart(sortedPairs(byStaff)));
   view.querySelector('#addBtn').onclick = () => openEntryModal(null);
   wirePeriodControl(view);
@@ -908,10 +946,88 @@ async function renderRoute() {
   try { route.render(view); } catch (err) { view.innerHTML = pageHead(route.label, '') + errorBanner(err.message); console.error(err); }
 }
 
+// ===================================================================
+// Authentication gate
+// ===================================================================
+function isLocked() { return document.body.classList.contains('locked'); }
+function unlock() { document.body.classList.remove('locked'); }
+
+function on401() {
+  if (state.auth) state.auth.authed = false;
+  state.entries = state.options = state.budgets = null; state.trash = null;
+  showAuthScreen('login', 'Your session expired. Please sign in again.');
+}
+
+async function logout() {
+  try { await api.post('/api/auth', { action: 'logout' }); } catch { /* ignore */ }
+  state.auth = { configured: true, authed: false };
+  state.entries = state.options = state.budgets = null; state.trash = null;
+  showAuthScreen('login');
+}
+
+function showAuthScreen(mode, msg) {
+  document.body.classList.add('locked');
+  const isSetup = mode === 'setup';
+  const view = document.getElementById('view');
+  view.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-brand">Cost Manager</div>
+        <h2>${isSetup ? 'Create a password' : 'Sign in'}</h2>
+        <p class="muted">${isSetup ? 'Set a password to protect your project budget. You’ll use it to sign in from any device.' : 'Enter your password to access the cost manager.'}</p>
+        <div id="authErr">${msg ? `<div class="error-banner">${esc(msg)}</div>` : ''}</div>
+        <form id="authForm">
+          <label class="field">Password<input type="password" name="password" placeholder="${isSetup ? 'Choose a password (min 4 characters)' : 'Your password'}" required /></label>
+          ${isSetup ? '<label class="field">Confirm password<input type="password" name="confirm" placeholder="Re-type the password" required /></label>' : ''}
+          <button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:6px">${isSetup ? 'Create password & continue' : 'Sign in'}</button>
+        </form>
+        ${isSetup ? '' : '<p class="muted" style="font-size:12px;margin-top:14px">Forgot your password? It can only be reset from the database.</p>'}
+      </div>
+    </div>`;
+  const form = view.querySelector('#authForm');
+  form.password.focus();
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const pw = form.password.value;
+    const btn = form.querySelector('button');
+    const setErr = (m) => { view.querySelector('#authErr').innerHTML = `<div class="error-banner">${esc(m)}</div>`; btn.disabled = false; };
+    btn.disabled = true;
+    try {
+      if (isSetup) {
+        if (pw.length < 4) return setErr('Password must be at least 4 characters.');
+        if (pw !== form.confirm.value) return setErr('Passwords do not match.');
+        await api.post('/api/auth', { action: 'setup', password: pw });
+      } else {
+        await api.post('/api/auth', { action: 'login', password: pw });
+      }
+      state.auth = { configured: true, authed: true };
+      state.entries = state.options = state.budgets = null; state.trash = null;
+      unlock();
+      if (!location.hash) location.hash = '#/';
+      renderRoute();
+    } catch (err) { setErr(err.message); }
+  };
+}
+
+async function gateAndRender() {
+  try {
+    state.auth = await api.get('/api/auth');
+  } catch (err) {
+    document.getElementById('view').innerHTML = pageHead('Cost Manager', '') + errorBanner('Cannot reach the server: ' + err.message);
+    return;
+  }
+  if (!state.auth.configured) return showAuthScreen('setup');
+  if (!state.auth.authed) return showAuthScreen('login');
+  unlock();
+  renderRoute();
+}
+
 // boot
 applyTheme(localStorage.getItem(THEME_KEY) || 'light');
 updateThemeButton();
 document.getElementById('themeToggle').onclick = toggleTheme;
-window.addEventListener('hashchange', renderRoute);
+const logoutBtn = document.getElementById('logoutBtn');
+if (logoutBtn) logoutBtn.onclick = logout;
+window.addEventListener('hashchange', () => { if (!isLocked()) renderRoute(); });
 buildNav();
-renderRoute();
+gateAndRender();
