@@ -965,8 +965,17 @@ async function logout() {
   showAuthScreen('login');
 }
 
+function enterApp() {
+  state.auth = Object.assign({}, state.auth, { configured: true, authed: true });
+  state.entries = state.options = state.budgets = null; state.trash = null;
+  unlock();
+  if (!location.hash) location.hash = '#/';
+  renderRoute();
+}
+
 function showAuthScreen(mode, msg) {
   document.body.classList.add('locked');
+  if (mode === 'forgot') return showForgotScreen(msg);
   const isSetup = mode === 'setup';
   const view = document.getElementById('view');
   view.innerHTML = `
@@ -974,18 +983,21 @@ function showAuthScreen(mode, msg) {
       <div class="auth-card">
         <div class="auth-brand">Cost Manager</div>
         <h2>${isSetup ? 'Create a password' : 'Sign in'}</h2>
-        <p class="muted">${isSetup ? 'Set a password to protect your project budget. You’ll use it to sign in from any device.' : 'Enter your password to access the cost manager.'}</p>
+        <p class="muted">${isSetup ? 'Set a password to protect your project budget. Add a recovery email so you can reset it if you forget.' : 'Enter your password to access the cost manager.'}</p>
         <div id="authErr">${msg ? `<div class="error-banner">${esc(msg)}</div>` : ''}</div>
         <form id="authForm">
           <label class="field">Password<input type="password" name="password" placeholder="${isSetup ? 'Choose a password (min 4 characters)' : 'Your password'}" required /></label>
           ${isSetup ? '<label class="field">Confirm password<input type="password" name="confirm" placeholder="Re-type the password" required /></label>' : ''}
+          ${isSetup ? '<label class="field">Recovery email<input type="email" name="email" placeholder="you@example.com — for password resets" required /></label>' : ''}
           <button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:6px">${isSetup ? 'Create password & continue' : 'Sign in'}</button>
         </form>
-        ${isSetup ? '' : '<p class="muted" style="font-size:12px;margin-top:14px">Forgot your password? It can only be reset from the database.</p>'}
+        ${isSetup ? '' : '<p style="font-size:12px;margin-top:14px"><a href="#" id="forgotLink" class="link-btn">Forgot your password?</a></p>'}
       </div>
     </div>`;
   const form = view.querySelector('#authForm');
   form.password.focus();
+  const forgotLink = view.querySelector('#forgotLink');
+  if (forgotLink) forgotLink.onclick = (e) => { e.preventDefault(); showAuthScreen('forgot'); };
   form.onsubmit = async (ev) => {
     ev.preventDefault();
     const pw = form.password.value;
@@ -996,16 +1008,64 @@ function showAuthScreen(mode, msg) {
       if (isSetup) {
         if (pw.length < 4) return setErr('Password must be at least 4 characters.');
         if (pw !== form.confirm.value) return setErr('Passwords do not match.');
-        await api.post('/api/auth', { action: 'setup', password: pw });
+        await api.post('/api/auth', { action: 'setup', password: pw, email: form.email.value.trim() });
       } else {
         await api.post('/api/auth', { action: 'login', password: pw });
       }
-      state.auth = { configured: true, authed: true };
-      state.entries = state.options = state.budgets = null; state.trash = null;
-      unlock();
-      if (!location.hash) location.hash = '#/';
-      renderRoute();
+      enterApp();
     } catch (err) { setErr(err.message); }
+  };
+}
+
+function showForgotScreen(msg) {
+  const view = document.getElementById('view');
+  view.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <div class="auth-brand">Cost Manager</div>
+        <h2>Reset password</h2>
+        <p class="muted">We’ll email a 6-digit reset code to your recovery email. Enter it below with a new password.</p>
+        <div id="authErr">${msg ? `<div class="error-banner">${esc(msg)}</div>` : ''}</div>
+        <button class="btn" id="sendCodeBtn" style="width:100%;justify-content:center">Email me a reset code</button>
+        <form id="resetForm" style="margin-top:14px;display:none">
+          <label class="field">Reset code<input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code from email" required /></label>
+          <label class="field">New password<input type="password" name="newPassword" placeholder="New password (min 4 characters)" required /></label>
+          <label class="field">Confirm new password<input type="password" name="confirm" placeholder="Re-type new password" required /></label>
+          <button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:6px">Reset password & sign in</button>
+        </form>
+        <p style="margin-top:14px"><a href="#" id="backToLogin" class="link-btn">← Back to sign in</a></p>
+      </div>
+    </div>`;
+  const setErr = (m, kind) => { view.querySelector('#authErr').innerHTML = `<div class="${kind === 'ok' ? 'notice' : 'error-banner'}">${esc(m)}</div>`; };
+  view.querySelector('#backToLogin').onclick = (e) => { e.preventDefault(); showAuthScreen('login'); };
+
+  const sendBtn = view.querySelector('#sendCodeBtn');
+  const resetForm = view.querySelector('#resetForm');
+  sendBtn.onclick = async () => {
+    sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+    try {
+      const r = await api.post('/api/auth', { action: 'forgot' });
+      setErr(`Reset code sent to ${r.sentTo || 'your recovery email'}. Check your inbox (and spam).`, 'ok');
+      resetForm.style.display = '';
+      resetForm.code.focus();
+      sendBtn.textContent = 'Resend code';
+      sendBtn.disabled = false;
+    } catch (err) {
+      setErr(err.message);
+      sendBtn.textContent = 'Email me a reset code';
+      sendBtn.disabled = false;
+    }
+  };
+  resetForm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const np = resetForm.newPassword.value;
+    const btn = resetForm.querySelector('button'); btn.disabled = true;
+    try {
+      if (np.length < 4) { setErr('New password must be at least 4 characters.'); btn.disabled = false; return; }
+      if (np !== resetForm.confirm.value) { setErr('Passwords do not match.'); btn.disabled = false; return; }
+      await api.post('/api/auth', { action: 'reset', code: resetForm.code.value.trim(), newPassword: np });
+      enterApp();
+    } catch (err) { setErr(err.message); btn.disabled = false; }
   };
 }
 
