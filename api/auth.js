@@ -53,7 +53,7 @@ export default async function handler(req, res) {
         if (!(await isConfigured())) return res.status(400).json({ error: 'No password has been set yet.' });
         const email = await getSetting('recovery_email');
         if (!email) return res.status(400).json({ error: 'No recovery email is on file for this app.' });
-        if (!emailConfigured()) return res.status(503).json({ error: 'Email recovery is not set up on the server yet. Add a RESEND_API_KEY in Vercel.' });
+        if (!emailConfigured()) return res.status(503).json({ error: 'Email recovery is not set up on the server yet. Add GMAIL_USER + GMAIL_APP_PASSWORD (or RESEND_API_KEY) in Vercel, then redeploy.' });
         const code = await createResetCode();
         await sendEmail({
           to: email,

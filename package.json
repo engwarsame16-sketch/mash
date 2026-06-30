@@ -9,6 +9,7 @@
     "setup-db": "node scripts/setup-db.mjs"
   },
   "dependencies": {
+    "nodemailer": "^6.9.16",
     "pg": "^8.13.1"
   },
   "devDependencies": {
