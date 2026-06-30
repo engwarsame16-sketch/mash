@@ -925,7 +925,21 @@ function renderTrash(view) {
 // Router + boot
 // ===================================================================
 function buildNav() {
-  document.getElementById('nav').innerHTML = ROUTES.map((r) => `<a class="nav-link" href="${r.hash}" data-hash="${r.hash}"><span class="nav-icon">${r.icon}</span>${r.label}</a>`).join('');
+  document.getElementById('nav').innerHTML = ROUTES.map((r) => `<a class="nav-link" href="${r.hash}" data-hash="${r.hash}" title="${esc(r.label)}"><span class="nav-icon">${r.icon}</span><span class="nav-text">${esc(r.label)}</span></a>`).join('');
+}
+
+// ---- Collapsible sidebar ----
+const SIDEBAR_KEY = 'cm-sidebar';
+function applySidebar() {
+  const collapsed = localStorage.getItem(SIDEBAR_KEY) === 'collapsed';
+  document.body.classList.toggle('collapsed', collapsed);
+  const btn = document.getElementById('collapseBtn');
+  if (btn) { btn.textContent = collapsed ? '≡' : '‹‹'; btn.title = collapsed ? 'Expand menu' : 'Collapse menu'; }
+}
+function toggleSidebar() {
+  const collapsed = localStorage.getItem(SIDEBAR_KEY) === 'collapsed';
+  localStorage.setItem(SIDEBAR_KEY, collapsed ? 'expanded' : 'collapsed');
+  applySidebar();
 }
 function currentRoute() { const hash = location.hash || '#/'; return ROUTES.find((r) => r.hash === hash) || ROUTES[0]; }
 function highlightNav() { const hash = location.hash || '#/'; document.querySelectorAll('.nav-link').forEach((a) => a.classList.toggle('active', a.dataset.hash === hash)); }
@@ -1088,6 +1102,9 @@ updateThemeButton();
 document.getElementById('themeToggle').onclick = toggleTheme;
 const logoutBtn = document.getElementById('logoutBtn');
 if (logoutBtn) logoutBtn.onclick = logout;
+const collapseBtn = document.getElementById('collapseBtn');
+if (collapseBtn) collapseBtn.onclick = toggleSidebar;
+applySidebar();
 window.addEventListener('hashchange', () => { if (!isLocked()) renderRoute(); });
 buildNav();
 gateAndRender();
