@@ -35,20 +35,24 @@ export default async function handler(req, res) {
       if (!existing.rows.length) return res.status(404).json({ error: 'Option not found.' });
       const { kind, name } = existing.rows[0];
 
+      // Only active (non-trashed) entries block deletion. Entries sitting in the
+      // Trash don't count — they hold their category/workstream/staff name as
+      // plain text, so deleting the option here is harmless even if one is later
+      // restored.
       let inUse = 0;
       if (kind === 'workstream') {
-        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE workstream = ${name};`;
+        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE workstream = ${name} AND deleted_at IS NULL;`;
         inUse = r.rows[0].n;
       } else if (kind === 'category') {
-        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE cost_category = ${name};`;
+        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE cost_category = ${name} AND deleted_at IS NULL;`;
         inUse = r.rows[0].n;
       } else if (kind === 'staff') {
-        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE staff = ${name};`;
+        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE staff = ${name} AND deleted_at IS NULL;`;
         inUse = r.rows[0].n;
       }
       if (inUse > 0) {
         return res.status(409).json({
-          error: `Cannot delete — ${inUse} cost ${inUse === 1 ? 'entry uses' : 'entries use'} "${name}". Reassign them first.`,
+          error: `Cannot delete — ${inUse} active cost ${inUse === 1 ? 'entry uses' : 'entries use'} "${name}". Reassign them first.`,
         });
       }
 
