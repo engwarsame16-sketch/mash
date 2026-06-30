@@ -20,6 +20,8 @@ export default async function handler(req, res) {
         await sql`UPDATE entries SET workstream = ${name} WHERE workstream = ${oldName};`;
       } else if (kind === 'category') {
         await sql`UPDATE entries SET cost_category = ${name} WHERE cost_category = ${oldName};`;
+      } else if (kind === 'staff') {
+        await sql`UPDATE entries SET staff = ${name} WHERE staff = ${oldName};`;
       }
       return res.status(200).json(rows[0]);
     }
@@ -35,6 +37,9 @@ export default async function handler(req, res) {
         inUse = r.rows[0].n;
       } else if (kind === 'category') {
         const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE cost_category = ${name};`;
+        inUse = r.rows[0].n;
+      } else if (kind === 'staff') {
+        const r = await sql`SELECT COUNT(*)::int AS n FROM entries WHERE staff = ${name};`;
         inUse = r.rows[0].n;
       }
       if (inUse > 0) {

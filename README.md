@@ -1,7 +1,7 @@
 # Project Cost Manager — Afgooye–Baraawe Road Corridor
 
 A single-user web app for tracking costs on the **Afgooye–Baraawe Road Corridor Project**
-(Lot 1 / Lot 2, multiple technical workstreams). Built as a **plain HTML + CSS + vanilla
+(a single project, multiple technical workstreams). Built as a **plain HTML + CSS + vanilla
 JavaScript** frontend with a small set of **serverless API functions** that persist data to
 **Vercel Postgres**, so your data survives redeployments and is reachable from any device via
 the live URL.
@@ -12,12 +12,18 @@ No framework, no build step. No login. No subscriptions. No external accounting 
 
 ## Features
 
-- **Dashboard** — Total Spent, Spent This Month, Spend by Lot, a Cost Category donut chart,
-  and a Workstream bar chart.
-- **Transactions** — sortable (date / amount), filterable (Lot / Workstream / Category) table
-  with add / edit / delete.
-- **Categories** — manage the available Workstream and Cost Category options without code changes.
-- **Reports** — monthly spend-trend bar chart plus a Lot × Workstream × Category breakdown table.
+- **Dashboard** — Total Spent, Spent This Month, a Cost Category donut chart,
+  a Workstream bar chart, a monthly spend bar chart, and overall-budget usage.
+- **Transactions** — sortable (date / amount), filterable (Workstream / Category / Staff /
+  Status) table with add / edit / delete.
+- **Staff** — tag each cost entry with who it was paid to, then see how much each person
+  (yourself + others) has taken from the project budget, with a per-person breakdown.
+- **Categories** — manage the available Workstream, Cost Category, and Staff options without
+  code changes.
+- **Trash** — deleted entries are recoverable for 30 days: restore them, delete forever, or
+  empty the trash. Entries older than 30 days are auto-removed.
+- **Reports** — monthly spend + cumulative trend charts, budget-vs-actual, spend by status,
+  top-10 expenses, and a Workstream × Category breakdown table.
 
 All charts are hand-rolled SVG — there are **no external script/CDN dependencies** in the browser.
 
@@ -28,10 +34,17 @@ All charts are hand-rolled SVG — there are **no external script/CDN dependenci
 | Description | e.g. `Eng. AK — June Salary`, `SOMGEG Lab — Soil Testing Batch 1` |
 | Amount (USD) | non-negative number |
 | Date | calendar date |
-| Lot | `Lot 1` / `Lot 2` / `Both/Shared` (fixed) |
 | Workstream | managed list — Traffic Study, Geotechnical Investigation, LiDAR & Drone Survey, Security & Safeguards, Materials Investigation, Other |
 | Cost Category | managed list — Staff Salary, Lab & Testing Contract, Equipment & Subcontractor, Other |
+| Paid to (Staff) | optional — which staff member this payment went to (you + others) |
+| Status | `Paid` / `Pending` / `Committed` (fixed) |
+| Reference / Invoice no. | optional free text |
 | Notes / remarks | optional free text |
+| Deleted at | internal — set when an entry is moved to the Trash; cleared on restore |
+
+> **Note:** Earlier versions tracked a `Lot` (Lot 1 / Lot 2 / Both-Shared). That distinction
+> has been removed — the app now treats everything as one project. Existing `lot` data is
+> retained in the database (harmless) but no longer shown or used.
 
 ---
 
@@ -42,12 +55,14 @@ index.html        ← static page shell (sidebar + main area)
 styles.css        ← all styling
 app.js            ← the whole frontend: routing, rendering, SVG charts, modal
 api/              ← Vercel serverless functions (the only backend)
-  setup.js        ← GET /api/setup  → create tables + seed defaults
-  entries.js      ← GET (list) / POST (create)
-  entries/[id].js ← PUT (update) / DELETE
-  options.js      ← GET (list) / POST (add workstream/category)
-  options/[id].js ← PUT (rename) / DELETE
-lib/db.js         ← @vercel/postgres connection + schema + seed data
+  setup.js         ← GET /api/setup  → create tables + seed defaults
+  entries.js       ← GET (list) / POST (create)  — ?trash=1 lists soft-deleted
+  entries/[id].js  ← PUT (update) / PATCH (restore) / DELETE (soft / ?forever=1 hard)
+  options.js       ← GET (list) / POST (add workstream/category/staff)
+  options/[id].js  ← PUT (rename) / DELETE
+  budgets.js       ← GET (list) / POST (create or update)
+  budgets/[id].js  ← DELETE
+lib/db.js         ← pg connection + schema + seed data + 30-day trash purge
 scripts/setup-db.mjs ← CLI alternative to /api/setup
 vercel.json       ← routes the dynamic /api/.../:id endpoints
 ```
@@ -61,7 +76,8 @@ touches the database. Postgres credentials never reach the browser.
 
 - **Frontend:** plain HTML + CSS + vanilla JavaScript (ES modules), no framework, no bundler
 - **Backend:** Vercel Serverless Functions (Node.js) under `/api`
-- **Database:** Vercel Postgres via **`@vercel/postgres`**
+- **Database:** Postgres via the **`pg`** package — works with Vercel Postgres / Neon,
+  Prisma Postgres, Supabase, or any plain Postgres connection string (`POSTGRES_URL`)
 - No external API dependencies beyond the database connection
 
 ---
@@ -132,8 +148,15 @@ vercel dev                  # serves index.html + the /api functions at localhos
 
 ## Safeguards
 
-- Renaming a workstream or cost category updates existing entries so reports stay consistent.
+- Renaming a workstream, cost category, or staff member updates existing entries so reports stay consistent.
 - An option can only be deleted when no entries reference it.
 - All amounts are stored as `NUMERIC(14,2)` and displayed in USD.
 - User-entered text is HTML-escaped before rendering (no script injection from descriptions/notes).
+- Deleting an entry moves it to the **Trash** (soft delete); it can be restored for 30 days,
+  after which it is permanently removed. "Delete forever" / "Empty trash" remove it immediately.
+
+> **Upgrading from a Lot-based version:** the schema changes (nullable `lot`, new `staff` and
+> `deleted_at` columns, removal of lot-scoped budgets) are applied automatically and
+> idempotently the next time any API function runs `ensureSchema()` — including by re-visiting
+> `/api/setup` (or running `npm run setup-db`). No manual migration is needed.
 # mash

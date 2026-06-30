@@ -20,6 +20,7 @@ const api = {
   get: (u) => http('GET', u),
   post: (u, b) => http('POST', u, b),
   put: (u, b) => http('PUT', u, b),
+  patch: (u, b) => http('PATCH', u, b),
   del: (u) => http('DELETE', u),
 };
 
@@ -44,11 +45,9 @@ function toDateInput(d) {
 }
 function monthKey(d) { const date = new Date(d); return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`; }
 function monthLabel(key) { const [y, m] = key.split('-'); const date = new Date(Date.UTC(Number(y), Number(m) - 1, 1)); return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }); }
-function lotBadgeClass(lot) { if (lot === 'Lot 1') return 'badge lot1'; if (lot === 'Lot 2') return 'badge lot2'; return 'badge shared'; }
 function statusClass(s) { return 'status ' + String(s || 'Paid').toLowerCase(); }
 const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#ca8a04', '#db2777', '#65a30d', '#475569'];
 const colorFor = (i) => PALETTE[i % PALETTE.length];
-const LOT_COLORS = { 'Lot 1': '#0ea5e9', 'Lot 2': '#f59e0b', 'Both/Shared': '#8b5cf6' };
 
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -120,7 +119,7 @@ const state = {
   budgets: null,
   period: 'all',
   // transactions controls
-  q: '', filterLot: '', filterWorkstream: '', filterCategory: '', filterStatus: '',
+  q: '', filterWorkstream: '', filterCategory: '', filterStatus: '', filterStaff: '',
   fromDate: '', toDate: '',
   sortKey: 'date', sortDir: 'desc',
 };
@@ -128,18 +127,21 @@ const state = {
 const ROUTES = [
   { hash: '#/', label: 'Dashboard', icon: '▣', render: renderDashboard },
   { hash: '#/transactions', label: 'Transactions', icon: '☰', render: renderTransactions },
+  { hash: '#/staff', label: 'Staff', icon: '👥', render: renderStaff },
   { hash: '#/budgets', label: 'Budgets', icon: '◎', render: renderBudgets },
   { hash: '#/reports', label: 'Reports', icon: '◔', render: renderReports },
   { hash: '#/categories', label: 'Categories', icon: '⚙', render: renderCategories },
+  { hash: '#/trash', label: 'Trash', icon: '🗑', render: renderTrash },
 ];
 
 async function loadAll() {
-  const [entries, options, budgets] = await Promise.all([
-    api.get('/api/entries'), api.get('/api/options'), api.get('/api/budgets'),
+  const [entries, options, budgets, trash] = await Promise.all([
+    api.get('/api/entries'), api.get('/api/options'), api.get('/api/budgets'), api.get('/api/entries?trash=1'),
   ]);
   state.entries = entries;
   state.options = options;
   state.budgets = budgets;
+  state.trash = trash;
 }
 
 function budgetMap() {
@@ -374,19 +376,14 @@ function renderDashboard(view) {
   const notPaid = all.filter((e) => e.status !== 'Paid').reduce((s, e) => s + Number(e.amount), 0);
   const budgetPct = overallBudget > 0 ? (totalAll / overallBudget) * 100 : 0;
 
-  const byLotAll = sumBy(all, 'lot');
-
-  // monthly + stacked-by-lot for scoped period
-  const monthMap = {}, lotMonth = {};
+  // monthly totals for the scoped period
+  const monthMap = {};
   for (const e of scoped) {
     const k = monthKey(e.entry_date);
     monthMap[k] = (monthMap[k] || 0) + Number(e.amount);
-    lotMonth[k] = lotMonth[k] || {};
-    lotMonth[k][e.lot] = (lotMonth[k][e.lot] || 0) + Number(e.amount);
   }
   const months = Object.keys(monthMap).sort();
   const monthly = months.map((k) => ({ label: monthLabel(k), value: monthMap[k] }));
-  const stacked = months.map((k) => ({ label: monthLabel(k), parts: lotMonth[k] || {} }));
 
   const recent = [...all].sort((a, b) => new Date(b.entry_date) - new Date(a.entry_date) || b.id - a.id).slice(0, 6);
 
@@ -403,27 +400,19 @@ function renderDashboard(view) {
 
     <div class="toolbar"><span class="muted" style="font-weight:600">Charts period:</span>${periodControl()}<div class="spacer"></div><span class="muted">${scoped.length} of ${all.length} entries · ${money(total(scoped))}</span></div>
 
-    <div class="panel-grid">
-      <div class="panel"><h3>Spend by Cost Category</h3><div id="catChart"></div></div>
-      <div class="panel"><h3>Spend by Lot</h3><div id="lotChart"></div></div>
-    </div>
+    <div class="panel"><h3>Spend by Cost Category</h3><div id="catChart"></div></div>
     <div class="panel"><h3>Spend by Workstream</h3><div id="wsChart"></div></div>
-    <div class="panel-grid">
-      <div class="panel"><h3>Monthly Spend</h3><div id="monthChart"></div></div>
-      <div class="panel"><h3>Monthly Spend by Lot</h3><div id="stackChart"></div></div>
-    </div>
+    <div class="panel"><h3>Monthly Spend</h3><div id="monthChart"></div></div>
 
     <div class="panel"><h3>Recent transactions <a href="#/transactions" class="link-btn" style="font-weight:600">View all →</a></h3>
-      <table><thead><tr><th>Date</th><th>Description</th><th>Lot</th><th>Status</th><th class="num">Amount</th></tr></thead>
-      <tbody>${recent.length ? recent.map((e) => `<tr><td style="white-space:nowrap">${formatDate(e.entry_date)}</td><td>${esc(e.description)}</td><td><span class="${lotBadgeClass(e.lot)}">${esc(e.lot)}</span></td><td><span class="${statusClass(e.status)}">${esc(e.status || 'Paid')}</span></td><td class="num amount red">${money(e.amount)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No entries yet</td></tr>'}</tbody></table>
+      <table><thead><tr><th>Date</th><th>Description</th><th>Workstream</th><th>Status</th><th class="num">Amount</th></tr></thead>
+      <tbody>${recent.length ? recent.map((e) => `<tr><td style="white-space:nowrap">${formatDate(e.entry_date)}</td><td>${esc(e.description)}</td><td>${esc(e.workstream)}</td><td><span class="${statusClass(e.status)}">${esc(e.status || 'Paid')}</span></td><td class="num amount red">${money(e.amount)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No entries yet</td></tr>'}</tbody></table>
     </div>`;
 
   if (overallBudget > 0) view.querySelector('#ovBudget').appendChild(progressList([{ name: 'Total project spend', actual: totalAll, budget: overallBudget }]));
   view.querySelector('#catChart').appendChild(donutChart(sortedPairs(sumBy(scoped, 'cost_category'))));
-  view.querySelector('#lotChart').appendChild(donutChart(sortedPairs(sumBy(scoped, 'lot'))));
   view.querySelector('#wsChart').appendChild(barChartH(sortedPairs(sumBy(scoped, 'workstream'))));
   view.querySelector('#monthChart').appendChild(barChartV(monthly));
-  view.querySelector('#stackChart').appendChild(stackedBarV(stacked, Object.keys(LOT_COLORS).filter((l) => byLotAll[l] !== undefined || true), LOT_COLORS));
 
   view.querySelector('#addBtn').onclick = () => openEntryModal(null);
   wirePeriodControl(view);
@@ -435,13 +424,13 @@ function renderDashboard(view) {
 function filteredTx() {
   const q = state.q.trim().toLowerCase();
   let rows = state.entries.filter((e) =>
-    (!state.filterLot || e.lot === state.filterLot) &&
     (!state.filterWorkstream || e.workstream === state.filterWorkstream) &&
     (!state.filterCategory || e.cost_category === state.filterCategory) &&
     (!state.filterStatus || (e.status || 'Paid') === state.filterStatus) &&
+    (!state.filterStaff || e.staff === state.filterStaff) &&
     (!state.fromDate || toDateInput(e.entry_date) >= state.fromDate) &&
     (!state.toDate || toDateInput(e.entry_date) <= state.toDate) &&
-    (!q || [e.description, e.notes, e.reference, e.workstream, e.cost_category].some((f) => String(f || '').toLowerCase().includes(q)))
+    (!q || [e.description, e.notes, e.reference, e.workstream, e.cost_category, e.staff].some((f) => String(f || '').toLowerCase().includes(q)))
   );
   rows.sort((a, b) => {
     let cmp;
@@ -457,7 +446,7 @@ function renderTransactions(view) {
   const o = state.options;
   const rows = filteredTx();
   const ftotal = rows.reduce((s, e) => s + Number(e.amount), 0);
-  const hasFilters = state.q || state.filterLot || state.filterWorkstream || state.filterCategory || state.filterStatus || state.fromDate || state.toDate;
+  const hasFilters = state.q || state.filterWorkstream || state.filterCategory || state.filterStatus || state.filterStaff || state.fromDate || state.toDate;
   const arrow = (k) => (state.sortKey === k ? (state.sortDir === 'asc' ? ' ▲' : ' ▼') : '');
   const opt = (sel, val, label) => `<option value="${esc(val)}"${sel === val ? ' selected' : ''}>${esc(label)}</option>`;
 
@@ -465,9 +454,9 @@ function renderTransactions(view) {
     pageHead('Transactions', 'All recorded cost entries', `<button class="btn" id="exportBtn">⬇ Export CSV</button><button class="btn primary" id="addBtn">+ Add Entry</button>`) +
     `<div class="toolbar">
       <input class="search" id="q" placeholder="Search description, notes, ref…" value="${esc(state.q)}" />
-      <select id="fLot"><option value="">All Lots</option>${o.lots.map((l) => opt(state.filterLot, l, l)).join('')}</select>
       <select id="fWs"><option value="">All Workstreams</option>${o.workstreams.map((w) => opt(state.filterWorkstream, w.name, w.name)).join('')}</select>
       <select id="fCat"><option value="">All Categories</option>${o.categories.map((c) => opt(state.filterCategory, c.name, c.name)).join('')}</select>
+      <select id="fStaff"><option value="">All Staff</option>${o.staff.map((s) => opt(state.filterStaff, s.name, s.name)).join('')}</select>
       <select id="fStatus"><option value="">Any Status</option>${o.statuses.map((s) => opt(state.filterStatus, s, s)).join('')}</select>
     </div>
     <div class="toolbar">
@@ -481,7 +470,7 @@ function renderTransactions(view) {
       <thead><tr>
         <th class="sortable" data-sort="date">Date${arrow('date')}</th>
         <th class="sortable" data-sort="desc">Description${arrow('desc')}</th>
-        <th>Lot</th><th>Workstream</th><th>Category</th><th>Status</th>
+        <th>Workstream</th><th>Category</th><th>Paid to</th><th>Status</th>
         <th class="num sortable" data-sort="amount">Amount${arrow('amount')}</th><th></th>
       </tr></thead>
       <tbody>${rows.length === 0
@@ -489,9 +478,9 @@ function renderTransactions(view) {
       : rows.map((e) => `<tr>
           <td style="white-space:nowrap">${formatDate(e.entry_date)}</td>
           <td>${esc(e.description)}${e.reference ? `<div class="muted" style="font-size:12px">Ref: ${esc(e.reference)}</div>` : ''}${e.notes ? `<div class="muted" style="font-size:12px">${esc(e.notes)}</div>` : ''}</td>
-          <td><span class="${lotBadgeClass(e.lot)}">${esc(e.lot)}</span></td>
           <td>${esc(e.workstream)}</td>
           <td><span class="badge gray">${esc(e.cost_category)}</span></td>
+          <td>${e.staff ? esc(e.staff) : '<span class="muted">—</span>'}</td>
           <td><span class="${statusClass(e.status)}">${esc(e.status || 'Paid')}</span></td>
           <td class="num amount red">${money(e.amount)}</td>
           <td class="num" style="white-space:nowrap"><button class="link-btn" data-edit="${e.id}">Edit</button>&nbsp;&nbsp;<button class="link-btn danger" data-del="${e.id}">Delete</button></td>
@@ -501,22 +490,22 @@ function renderTransactions(view) {
   const reRender = () => renderRoute();
   view.querySelector('#addBtn').onclick = () => openEntryModal(null);
   view.querySelector('#exportBtn').onclick = () => {
-    const header = ['Date', 'Description', 'Amount (USD)', 'Lot', 'Workstream', 'Cost Category', 'Status', 'Reference', 'Notes'];
-    const data = rows.map((e) => [toDateInput(e.entry_date), e.description, Number(e.amount).toFixed(2), e.lot, e.workstream, e.cost_category, e.status || 'Paid', e.reference || '', e.notes || '']);
+    const header = ['Date', 'Description', 'Amount (USD)', 'Workstream', 'Cost Category', 'Paid to', 'Status', 'Reference', 'Notes'];
+    const data = rows.map((e) => [toDateInput(e.entry_date), e.description, Number(e.amount).toFixed(2), e.workstream, e.cost_category, e.staff || '', e.status || 'Paid', e.reference || '', e.notes || '']);
     downloadCSV('cost-entries.csv', [header, ...data]);
   };
   const qEl = view.querySelector('#q');
   qEl.oninput = (ev) => { state.q = ev.target.value; const r = filteredTx(); /* light refresh */ };
   qEl.onchange = (ev) => { state.q = ev.target.value; reRender(); };
   qEl.onkeydown = (ev) => { if (ev.key === 'Enter') { state.q = ev.target.value; reRender(); } };
-  view.querySelector('#fLot').onchange = (ev) => { state.filterLot = ev.target.value; reRender(); };
   view.querySelector('#fWs').onchange = (ev) => { state.filterWorkstream = ev.target.value; reRender(); };
   view.querySelector('#fCat').onchange = (ev) => { state.filterCategory = ev.target.value; reRender(); };
+  view.querySelector('#fStaff').onchange = (ev) => { state.filterStaff = ev.target.value; reRender(); };
   view.querySelector('#fStatus').onchange = (ev) => { state.filterStatus = ev.target.value; reRender(); };
   view.querySelector('#fFrom').onchange = (ev) => { state.fromDate = ev.target.value; reRender(); };
   view.querySelector('#fTo').onchange = (ev) => { state.toDate = ev.target.value; reRender(); };
   const clearF = view.querySelector('#clearF');
-  if (clearF) clearF.onclick = () => { state.q = state.filterLot = state.filterWorkstream = state.filterCategory = state.filterStatus = state.fromDate = state.toDate = ''; reRender(); };
+  if (clearF) clearF.onclick = () => { state.q = state.filterWorkstream = state.filterCategory = state.filterStatus = state.filterStaff = state.fromDate = state.toDate = ''; reRender(); };
   view.querySelectorAll('th[data-sort]').forEach((th) => {
     th.onclick = () => { const k = th.dataset.sort; if (state.sortKey === k) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc'; else { state.sortKey = k; state.sortDir = 'desc'; } reRender(); };
   });
@@ -526,7 +515,7 @@ function renderTransactions(view) {
 
 async function deleteEntry(entry) {
   if (!entry) return;
-  if (!confirm(`Delete "${entry.description}"? This cannot be undone.`)) return;
+  if (!confirm(`Move "${entry.description}" to Trash? You can restore it for 30 days from the Trash page.`)) return;
   try { await api.del(`/api/entries/${entry.id}`); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
 }
 
@@ -540,12 +529,10 @@ function renderBudgets(view) {
   const totalAll = total(all);
   const overall = bm['overall:ALL'] || 0;
 
-  const byLot = sumBy(all, 'lot');
   const byWs = sumBy(all, 'workstream');
   const byCat = sumBy(all, 'cost_category');
 
   const sumBudgets = (scope, names) => names.reduce((s, n) => s + (bm[`${scope}:${n}`] || 0), 0);
-  const lotBudgetTotal = sumBudgets('lot', o.lots);
   const wsBudgetTotal = sumBudgets('workstream', o.workstreams.map((w) => w.name));
   const catBudgetTotal = sumBudgets('category', o.categories.map((c) => c.name));
 
@@ -576,8 +563,8 @@ function renderBudgets(view) {
     `<div class="cards">
       <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overall ? money(overall) : '—'}</div><div class="hint">${overall ? money(overall - totalAll) + ' remaining' : 'Not set'}</div></div>
       <div class="card"><div class="label">Total Spent</div><div class="value red">${money(totalAll)}</div><div class="hint">${overall ? ((totalAll / overall) * 100).toFixed(0) + '% of overall budget' : 'all time'}</div></div>
-      <div class="card"><div class="label">Lot Budgets</div><div class="value">${money(lotBudgetTotal)}</div><div class="hint">across all lots</div></div>
       <div class="card"><div class="label">Workstream Budgets</div><div class="value">${money(wsBudgetTotal)}</div><div class="hint">across all workstreams</div></div>
+      <div class="card"><div class="label">Category Budgets</div><div class="value">${money(catBudgetTotal)}</div><div class="hint">across all categories</div></div>
     </div>
 
     <div class="panel"><h3>Overall project budget</h3><p class="sub">The total approved budget for the whole project.</p>
@@ -590,12 +577,10 @@ function renderBudgets(view) {
       <div style="margin-top:14px" id="overallProg"></div>
     </div>
 
-    <div class="panel"><h3>Budget by Lot</h3><div id="lotBudgets"></div></div>
     <div class="panel"><h3>Budget by Workstream</h3><div id="wsBudgets"></div></div>
     <div class="panel"><h3>Budget by Cost Category</h3><div id="catBudgets"></div></div>`;
 
   if (overall) view.querySelector('#overallProg').appendChild(progressList([{ name: 'Total project spend', actual: totalAll, budget: overall }]));
-  view.querySelector('#lotBudgets').innerHTML = o.lots.map((l) => editorRow('lot', l, byLot[l] || 0)).join('');
   view.querySelector('#wsBudgets').innerHTML = o.workstreams.map((w) => editorRow('workstream', w.name, byWs[w.name] || 0)).join('');
   view.querySelector('#catBudgets').innerHTML = o.categories.map((c) => editorRow('category', c.name, byCat[c.name] || 0)).join('');
 
@@ -633,22 +618,18 @@ function renderReports(view) {
   const bm = budgetMap();
 
   // monthly + cumulative
-  const monthMap = {}, lotMonth = {};
+  const monthMap = {};
   for (const e of scoped) {
     const k = monthKey(e.entry_date);
     monthMap[k] = (monthMap[k] || 0) + Number(e.amount);
-    lotMonth[k] = lotMonth[k] || {};
-    lotMonth[k][e.lot] = (lotMonth[k][e.lot] || 0) + Number(e.amount);
   }
   const months = Object.keys(monthMap).sort();
   const monthly = months.map((k) => ({ label: monthLabel(k), value: monthMap[k] }));
-  const stacked = months.map((k) => ({ label: monthLabel(k), parts: lotMonth[k] || {} }));
   let run = 0; const cumulative = months.map((k) => ({ label: monthLabel(k), value: (run += monthMap[k]) }));
 
   // budget vs actual
-  const byLot = sumBy(scoped, 'lot'), byWs = sumBy(scoped, 'workstream'), byCat = sumBy(scoped, 'cost_category');
+  const byWs = sumBy(scoped, 'workstream'), byCat = sumBy(scoped, 'cost_category');
   const bvaRows = [];
-  o.lots.forEach((l) => bm[`lot:${l}`] && bvaRows.push({ scope: 'Lot', name: l, actual: byLot[l] || 0, budget: bm[`lot:${l}`] }));
   o.workstreams.forEach((w) => bm[`workstream:${w.name}`] && bvaRows.push({ scope: 'Workstream', name: w.name, actual: byWs[w.name] || 0, budget: bm[`workstream:${w.name}`] }));
   o.categories.forEach((c) => bm[`category:${c.name}`] && bvaRows.push({ scope: 'Category', name: c.name, actual: byCat[c.name] || 0, budget: bm[`category:${c.name}`] }));
 
@@ -659,11 +640,11 @@ function renderReports(view) {
   // pivot
   const pmap = {};
   for (const e of scoped) {
-    const key = `${e.lot}||${e.workstream}||${e.cost_category}`;
-    if (!pmap[key]) pmap[key] = { lot: e.lot, workstream: e.workstream, cost_category: e.cost_category, total: 0, count: 0 };
+    const key = `${e.workstream}||${e.cost_category}`;
+    if (!pmap[key]) pmap[key] = { workstream: e.workstream, cost_category: e.cost_category, total: 0, count: 0 };
     pmap[key].total += Number(e.amount); pmap[key].count += 1;
   }
-  const pivot = Object.values(pmap).sort((a, b) => a.lot.localeCompare(b.lot) || a.workstream.localeCompare(b.workstream) || a.cost_category.localeCompare(b.cost_category));
+  const pivot = Object.values(pmap).sort((a, b) => a.workstream.localeCompare(b.workstream) || a.cost_category.localeCompare(b.cost_category));
   const grand = pivot.reduce((s, r) => s + r.total, 0);
   const grandCount = pivot.reduce((s, r) => s + r.count, 0);
 
@@ -676,7 +657,6 @@ function renderReports(view) {
       <div class="panel"><h3>Monthly Spend</h3><div id="rMonth"></div></div>
       <div class="panel"><h3>Cumulative Spend</h3><div id="rCum"></div></div>
     </div>
-    <div class="panel"><h3>Monthly Spend by Lot</h3><div id="rStack"></div></div>
 
     <div class="panel"><h3>Budget vs Actual</h3><p class="sub">Only scopes with a budget set are shown. Manage budgets on the Budgets page.</p>
       ${bvaRows.length ? `<table><thead><tr><th>Scope</th><th>Target</th><th class="num">Budget</th><th class="num">Actual</th><th class="num">Variance</th><th class="num">Used</th></tr></thead>
@@ -686,27 +666,26 @@ function renderReports(view) {
     <div class="panel-grid">
       <div class="panel"><h3>Spend by Payment Status</h3><div id="rStatus"></div></div>
       <div class="panel"><h3>Top 10 Largest Expenses</h3>
-        ${top.length ? `<table><thead><tr><th>Description</th><th>Lot</th><th class="num">Amount</th></tr></thead><tbody>${top.map((e) => `<tr><td>${esc(e.description)}<div class="muted" style="font-size:12px">${formatDate(e.entry_date)} · ${esc(e.workstream)}</div></td><td><span class="${lotBadgeClass(e.lot)}">${esc(e.lot)}</span></td><td class="num amount red">${money(e.amount)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No data yet</div>'}
+        ${top.length ? `<table><thead><tr><th>Description</th><th>Workstream</th><th class="num">Amount</th></tr></thead><tbody>${top.map((e) => `<tr><td>${esc(e.description)}<div class="muted" style="font-size:12px">${formatDate(e.entry_date)} · ${esc(e.workstream)}</div></td><td>${esc(e.workstream)}</td><td class="num amount red">${money(e.amount)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No data yet</div>'}
       </div>
     </div>
 
-    <div class="section-title">Breakdown by Lot × Workstream × Category</div>
+    <div class="section-title">Breakdown by Workstream × Category</div>
     <table>
-      <thead><tr><th>Lot</th><th>Workstream</th><th>Cost Category</th><th class="num">Entries</th><th class="num">Total</th><th class="num">% of Total</th></tr></thead>
-      <tbody>${pivot.length === 0 ? '<tr><td colspan="6" class="empty">No cost entries in this period.</td></tr>'
-      : pivot.map((r) => `<tr><td>${esc(r.lot)}</td><td>${esc(r.workstream)}</td><td>${esc(r.cost_category)}</td><td class="num">${r.count}</td><td class="num amount">${money(r.total)}</td><td class="num muted">${grand ? ((r.total / grand) * 100).toFixed(1) : '0.0'}%</td></tr>`).join('')}</tbody>
-      ${pivot.length ? `<tfoot><tr><td colspan="3">Grand Total</td><td class="num">${grandCount}</td><td class="num amount green">${money(grand)}</td><td class="num muted">100%</td></tr></tfoot>` : ''}
+      <thead><tr><th>Workstream</th><th>Cost Category</th><th class="num">Entries</th><th class="num">Total</th><th class="num">% of Total</th></tr></thead>
+      <tbody>${pivot.length === 0 ? '<tr><td colspan="5" class="empty">No cost entries in this period.</td></tr>'
+      : pivot.map((r) => `<tr><td>${esc(r.workstream)}</td><td>${esc(r.cost_category)}</td><td class="num">${r.count}</td><td class="num amount">${money(r.total)}</td><td class="num muted">${grand ? ((r.total / grand) * 100).toFixed(1) : '0.0'}%</td></tr>`).join('')}</tbody>
+      ${pivot.length ? `<tfoot><tr><td colspan="2">Grand Total</td><td class="num">${grandCount}</td><td class="num amount green">${money(grand)}</td><td class="num muted">100%</td></tr></tfoot>` : ''}
     </table>`;
 
   view.querySelector('#rMonth').appendChild(barChartV(monthly));
   view.querySelector('#rCum').appendChild(areaChart(cumulative));
-  view.querySelector('#rStack').appendChild(stackedBarV(stacked, Object.keys(LOT_COLORS), LOT_COLORS));
   view.querySelector('#rStatus').appendChild(donutChart(sortedPairs(byStatus)));
 
   view.querySelector('#exportPivot').onclick = () => {
-    const header = ['Lot', 'Workstream', 'Cost Category', 'Entries', 'Total (USD)', '% of Total'];
-    const data = pivot.map((r) => [r.lot, r.workstream, r.cost_category, r.count, r.total.toFixed(2), grand ? ((r.total / grand) * 100).toFixed(1) + '%' : '0%']);
-    data.push(['Grand Total', '', '', grandCount, grand.toFixed(2), '100%']);
+    const header = ['Workstream', 'Cost Category', 'Entries', 'Total (USD)', '% of Total'];
+    const data = pivot.map((r) => [r.workstream, r.cost_category, r.count, r.total.toFixed(2), grand ? ((r.total / grand) * 100).toFixed(1) + '%' : '0%']);
+    data.push(['Grand Total', '', grandCount, grand.toFixed(2), '100%']);
     downloadCSV('cost-breakdown.csv', [header, ...data]);
   };
   wirePeriodControl(view);
@@ -725,9 +704,9 @@ function renderCategories(view) {
     </div>`;
 
   view.innerHTML =
-    pageHead('Categories', 'Manage the workstream and cost category options') +
-    `<div class="notice">Lots (Lot 1, Lot 2, Both/Shared) and payment statuses (Paid, Pending, Committed) are fixed. You can freely add, rename, or remove workstreams and cost categories — renaming updates existing entries, and an option can only be deleted once no entries use it.</div>
-     <div class="panel-grid">${listHtml('Workstreams', 'workstream', o.workstreams)}${listHtml('Cost Categories', 'category', o.categories)}</div>`;
+    pageHead('Categories', 'Manage the workstream, cost category, and staff options') +
+    `<div class="notice">Payment statuses (Paid, Pending, Committed) are fixed. You can freely add, rename, or remove workstreams, cost categories, and staff — renaming updates existing entries, and an option can only be deleted once no entries use it.</div>
+     <div class="panel-grid">${listHtml('Workstreams', 'workstream', o.workstreams)}${listHtml('Cost Categories', 'category', o.categories)}${listHtml('Staff (paid to)', 'staff', o.staff)}</div>`;
 
   view.querySelectorAll('form.add-opt').forEach((form) => {
     form.onsubmit = async (ev) => { ev.preventDefault(); const name = form.name.value.trim(); if (!name) return; try { await api.post('/api/options', { kind: form.dataset.kind, name }); await loadAll(); renderRoute(); } catch (err) { alert(err.message); } };
@@ -761,7 +740,7 @@ function wireAddOptionButtons(form) {
       panel.className = 'field full inline-add';
       panel.innerHTML = `
         <div style="display:flex;gap:8px;align-items:center;background:var(--panel-alt);border:1px solid var(--border);border-radius:8px;padding:8px">
-          <input placeholder="New ${kind === 'workstream' ? 'workstream' : 'cost category'} name" />
+          <input placeholder="New ${kind === 'workstream' ? 'workstream' : kind === 'category' ? 'cost category' : 'staff member'} name" />
           <button type="button" class="btn primary small" data-add>Add</button>
           <button type="button" class="btn small" data-cancel>Cancel</button>
         </div>
@@ -778,7 +757,7 @@ function wireAddOptionButtons(form) {
         addBtn.disabled = true; addBtn.textContent = 'Adding…';
         try {
           const created = await api.post('/api/options', { kind, name });
-          const listKey = kind === 'workstream' ? 'workstreams' : 'categories';
+          const listKey = kind === 'workstream' ? 'workstreams' : kind === 'category' ? 'categories' : 'staff';
           state.options[listKey].push(created);
           state.options[listKey].sort((a, b) => a.name.localeCompare(b.name));
           const opt = document.createElement('option');
@@ -804,9 +783,10 @@ function openEntryModal(entry) {
   const o = state.options;
   const editing = Boolean(entry && entry.id);
   const cur = editing
-    ? { description: entry.description, amount: entry.amount, entry_date: toDateInput(entry.entry_date), lot: entry.lot, workstream: entry.workstream, cost_category: entry.cost_category, status: entry.status || 'Paid', reference: entry.reference || '', notes: entry.notes || '' }
-    : { description: '', amount: '', entry_date: new Date().toISOString().slice(0, 10), lot: o.lots[0], workstream: o.workstreams[0]?.name || '', cost_category: o.categories[0]?.name || '', status: 'Paid', reference: '', notes: '' };
+    ? { description: entry.description, amount: entry.amount, entry_date: toDateInput(entry.entry_date), workstream: entry.workstream, cost_category: entry.cost_category, staff: entry.staff || '', status: entry.status || 'Paid', reference: entry.reference || '', notes: entry.notes || '' }
+    : { description: '', amount: '', entry_date: new Date().toISOString().slice(0, 10), workstream: o.workstreams[0]?.name || '', cost_category: o.categories[0]?.name || '', staff: '', status: 'Paid', reference: '', notes: '' };
   const optTag = (val, sel) => `<option value="${esc(val)}"${val === sel ? ' selected' : ''}>${esc(val)}</option>`;
+  const optBlank = (sel) => `<option value=""${sel === '' ? ' selected' : ''}>— None —</option>`;
 
   const root = document.getElementById('modal-root');
   root.innerHTML = `
@@ -818,8 +798,8 @@ function openEntryModal(entry) {
           <label class="field full">Description<input name="description" value="${esc(cur.description)}" placeholder="e.g. SOMGEG Lab - Soil Testing Batch 1" required /></label>
           <label class="field">Amount (USD)<input name="amount" type="number" step="0.01" min="0" value="${esc(cur.amount)}" placeholder="0.00" required /></label>
           <label class="field">Date<input name="entry_date" type="date" value="${esc(cur.entry_date)}" required /></label>
-          <label class="field">Lot<select name="lot">${o.lots.map((l) => optTag(l, cur.lot)).join('')}</select></label>
           <label class="field">Status<select name="status">${o.statuses.map((s) => optTag(s, cur.status)).join('')}</select></label>
+          <label class="field">Paid to (staff)<div class="select-add"><select name="staff">${optBlank(cur.staff)}${o.staff.map((s) => optTag(s.name, cur.staff)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="staff" data-target="staff" title="Add a new staff member">+ New</button></div></label>
           <label class="field">Workstream<div class="select-add"><select name="workstream" required>${o.workstreams.map((w) => optTag(w.name, cur.workstream)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="workstream" data-target="workstream" title="Add a new workstream">+ New</button></div></label>
           <label class="field">Cost Category<div class="select-add"><select name="cost_category" required>${o.categories.map((c) => optTag(c.name, cur.cost_category)).join('')}</select><button type="button" class="btn small add-opt-btn" data-kind="category" data-target="cost_category" title="Add a new cost category">+ New</button></div></label>
           <label class="field full">Reference / Invoice no. (optional)<input name="reference" value="${esc(cur.reference)}" placeholder="e.g. INV-2026-014" /></label>
@@ -839,7 +819,7 @@ function openEntryModal(entry) {
   document.getElementById('entryForm').onsubmit = async (ev) => {
     ev.preventDefault();
     const f = ev.target;
-    const payload = { description: f.description.value, amount: f.amount.value, entry_date: f.entry_date.value, lot: f.lot.value, workstream: f.workstream.value, cost_category: f.cost_category.value, status: f.status.value, reference: f.reference.value, notes: f.notes.value };
+    const payload = { description: f.description.value, amount: f.amount.value, entry_date: f.entry_date.value, workstream: f.workstream.value, cost_category: f.cost_category.value, staff: f.staff.value || null, status: f.status.value, reference: f.reference.value, notes: f.notes.value };
     const saveBtn = document.getElementById('saveBtn'); saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try {
       if (editing) await api.put(`/api/entries/${entry.id}`, payload); else await api.post('/api/entries', payload);
@@ -848,6 +828,98 @@ function openEntryModal(entry) {
       document.getElementById('formErr').innerHTML = errorBanner(err.message);
       saveBtn.disabled = false; saveBtn.textContent = editing ? 'Save changes' : 'Add entry';
     }
+  };
+}
+
+// ===================================================================
+// Staff — what each person has taken from the project budget
+// ===================================================================
+function renderStaff(view) {
+  const o = state.options;
+  const all = state.entries;
+  const scoped = all.filter((e) => inPeriod(e, state.period));
+  const bm = budgetMap();
+  const overallBudget = bm['overall:ALL'] || 0;
+  const scopedTotal = total(scoped);
+
+  // Totals per staff member (within the selected period).
+  const byStaff = sumBy(scoped.filter((e) => e.staff), 'staff');
+  const staffRows = o.staff
+    .map((s) => ({ name: s.name, total: byStaff[s.name] || 0, count: scoped.filter((e) => e.staff === s.name).length }))
+    .sort((a, b) => b.total - a.total);
+  const untagged = scoped.filter((e) => !e.staff);
+  const untaggedTotal = total(untagged);
+  const takenTotal = Object.values(byStaff).reduce((s, n) => s + n, 0);
+
+  view.innerHTML =
+    pageHead('Staff', 'How much each person has taken from the project budget',
+      `<button class="btn primary" id="addBtn">+ Add Entry</button>`) +
+    `<div class="cards">
+      <div class="card"><div class="label">Taken by Staff</div><div class="value red">${money(takenTotal)}</div><div class="hint">${scopedTotal ? ((takenTotal / scopedTotal) * 100).toFixed(0) + '% of period spend' : 'none tagged'} · ${staffRows.length} people</div></div>
+      <div class="card"><div class="label">Untagged Spend</div><div class="value amber">${money(untaggedTotal)}</div><div class="hint">${untagged.length} entries · no staff assigned</div></div>
+      <div class="card"><div class="label">Overall Budget</div><div class="value brand">${overallBudget > 0 ? money(overallBudget - takenTotal) : '—'}</div><div class="hint">${overallBudget > 0 ? money(takenTotal) + ' taken of ' + money(overallBudget) : 'Set a budget on the Budgets page'}</div></div>
+    </div>
+
+    ${staffRows.length === 0 && o.staff.length === 0
+      ? `<div class="notice">No staff members yet. Add people (yourself and anyone else) on the <a href="#/categories" class="link-btn">Categories page</a>, or use “+ New” in the entry form’s “Paid to” field.</div>`
+      : `<div class="toolbar"><span class="muted" style="font-weight:600">Period:</span>${periodControl()}<div class="spacer"></div><span class="muted">${scoped.length} entries · ${money(scopedTotal)}</span></div>
+
+    <div class="panel-grid">
+      <div class="panel"><h3>Spend by Staff</h3><div id="staffChart"></div></div>
+      <div class="panel"><h3>Per-person totals</h3>
+        ${staffRows.length ? `<table><thead><tr><th>Staff member</th><th class="num">Entries</th><th class="num">Total taken</th>${overallBudget > 0 ? '<th class="num">% of budget</th>' : ''}</tr></thead>
+        <tbody>${staffRows.map((r) => `<tr><td><span class="badge gray">${esc(r.name)}</span></td><td class="num">${r.count}</td><td class="num amount red">${money(r.total)}</td>${overallBudget > 0 ? `<td class="num muted">${((r.total / overallBudget) * 100).toFixed(1)}%</td>` : ''}</tr>`).join('')}
+        ${untaggedTotal > 0 ? `<tr><td><span class="muted">No staff</span></td><td class="num">${untagged.length}</td><td class="num amount muted">${money(untaggedTotal)}</td>${overallBudget > 0 ? `<td class="num muted">${((untaggedTotal / overallBudget) * 100).toFixed(1)}%</td>` : ''}</tr>` : ''}
+        <tr style="border-top:2px solid var(--border)"><td><strong>Total</strong></td><td class="num"><strong>${scoped.length}</strong></td><td class="num amount"><strong>${money(scopedTotal)}</strong></td>${overallBudget > 0 ? `<td class="num"><strong>${scopedTotal ? ((scopedTotal / overallBudget) * 100).toFixed(1) : '0.0'}%</strong></td>` : ''}</tr></tbody></table>` : '<div class="empty">No tagged spend in this period.</div>'}
+      </div>
+    </div>`}`;
+
+  if (staffRows.length) view.querySelector('#staffChart').appendChild(donutChart(sortedPairs(byStaff)));
+  view.querySelector('#addBtn').onclick = () => openEntryModal(null);
+  wirePeriodControl(view);
+}
+
+// ===================================================================
+// Trash — restore soft-deleted entries (auto-purged after 30 days)
+// ===================================================================
+const RETENTION_DAYS = 30;
+function renderTrash(view) {
+  const trash = (state.trash || []).map((e) => {
+    const deletedAt = new Date(e.deleted_at);
+    const daysLeft = Math.max(0, RETENTION_DAYS - Math.floor((Date.now() - deletedAt.getTime()) / 86400000));
+    return { ...e, deletedAt, daysLeft };
+  }).sort((a, b) => b.deletedAt - a.deletedAt);
+
+  view.innerHTML =
+    pageHead('Trash', `Soft-deleted entries — kept for ${RETENTION_DAYS} days`, trash.length ? `<button class="btn danger" id="emptyBtn">🗑 Empty trash</button>` : '') +
+    (trash.length === 0
+      ? `<div class="notice">Trash is empty. Deleted entries land here and can be restored for ${RETENTION_DAYS} days, after which they are permanently removed.</div>`
+      : `<table>
+        <thead><tr><th>Deleted</th><th>Auto-removed in</th><th>Date</th><th>Description</th><th>Workstream</th><th class="num">Amount</th><th></th></tr></thead>
+        <tbody>${trash.map((e) => `<tr>
+          <td style="white-space:nowrap">${formatDate(e.deletedAt)}</td>
+          <td><span class="badge ${e.daysLeft <= 7 ? 'warn' : 'gray'}">${e.daysLeft} day${e.daysLeft === 1 ? '' : 's'}</span></td>
+          <td style="white-space:nowrap">${formatDate(e.entry_date)}</td>
+          <td>${esc(e.description)}${e.notes ? `<div class="muted" style="font-size:12px">${esc(e.notes)}</div>` : ''}</td>
+          <td>${esc(e.workstream)}</td>
+          <td class="num amount red">${money(e.amount)}</td>
+          <td class="num" style="white-space:nowrap"><button class="link-btn" data-restore="${e.id}">Restore</button>&nbsp;&nbsp;<button class="link-btn danger" data-forever="${e.id}">Delete forever</button></td>
+        </tr>`).join('')}</tbody>
+      </table>`);
+
+  const restore = async (id) => {
+    try { await api.patch(`/api/entries/${id}`); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
+  };
+  const forever = async (e) => {
+    if (!confirm(`Permanently delete "${e.description}"? This cannot be undone.`)) return;
+    try { await api.del(`/api/entries/${e.id}?forever=1`); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
+  };
+  view.querySelectorAll('[data-restore]').forEach((b) => { b.onclick = () => restore(b.dataset.restore); });
+  view.querySelectorAll('[data-forever]').forEach((b) => { b.onclick = () => forever(trash.find((e) => String(e.id) === b.dataset.forever)); });
+  const emptyBtn = view.querySelector('#emptyBtn');
+  if (emptyBtn) emptyBtn.onclick = async () => {
+    if (!confirm(`Permanently delete all ${trash.length} entries in the Trash? This cannot be undone.`)) return;
+    try { for (const e of trash) await api.del(`/api/entries/${e.id}?forever=1`); await loadAll(); renderRoute(); } catch (err) { alert(err.message); }
   };
 }
 

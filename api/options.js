@@ -1,8 +1,8 @@
-import { sql, ensureSchema, LOTS, STATUSES } from '../lib/db.js';
+import { sql, ensureSchema, STATUSES } from '../lib/db.js';
 
-const KINDS = ['workstream', 'category'];
+const KINDS = ['workstream', 'category', 'staff'];
 
-// /api/options — GET (list workstreams + categories + lots) / POST (add)
+// /api/options — GET (list workstreams + categories + staff) / POST (add)
 export default async function handler(req, res) {
   try {
     await ensureSchema();
@@ -12,7 +12,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         workstreams: rows.filter((r) => r.kind === 'workstream'),
         categories: rows.filter((r) => r.kind === 'category'),
-        lots: LOTS,
+        staff: rows.filter((r) => r.kind === 'staff'),
         statuses: STATUSES,
       });
     }
@@ -23,6 +23,7 @@ export default async function handler(req, res) {
       const name = body.name ? String(body.name).trim() : '';
       if (!KINDS.includes(kind)) return res.status(400).json({ error: 'Invalid kind.' });
       if (!name) return res.status(400).json({ error: 'Name is required.' });
+      if (kind === 'staff' && name.length > 80) return res.status(400).json({ error: 'Staff name is too long.' });
 
       const { rows } = await sql`
         INSERT INTO options (kind, name) VALUES (${kind}, ${name})
